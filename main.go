@@ -117,12 +117,12 @@ func main() {
 		zap.S().Fatal(err)
 	}
 
-	err = c.SetNick(config.UserName)
+	err = c.Use(config.ServerId)
 	if err != nil {
 		zap.S().Fatal(err)
 	}
 
-	err = c.Use(config.ServerId)
+	err = c.SetNick(config.UserName)
 	if err != nil {
 		zap.S().Fatal(err)
 	}
