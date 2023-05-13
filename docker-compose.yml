@@ -1,0 +1,13 @@
+# docker-compose.yml
+version: '3.8'
+services:
+  myapp:
+    image: ghcr.io/scarjit/ts3automovebot:latest
+    environment:
+      - TS3_USER=youruser
+      - TS3_PASSWORD=yourpassword
+      - TS3_URL=yoururl
+      - TS3_SERVER_ID=yourserverid
+      - TS3_AFK_CHANNEL_NAME=yourafkchannelname
+      - TS3_MAX_IDLE_TIME_SEC=yourmaxidletimesec
+      - TS3_IGNORED_CHANNELS=yourignoredchannels
