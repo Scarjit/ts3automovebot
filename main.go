@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/multiplay/go-ts3"
 	"go.uber.org/zap"
-	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -110,22 +109,27 @@ func main() {
 
 	c, err := ts3.NewClient(config.Url)
 	if err != nil {
-		log.Fatal(err)
+		zap.S().Fatal(err)
 	}
 	defer c.Close()
 
 	if err = c.Login(config.UserName, config.Password); err != nil {
-		log.Fatal(err)
+		zap.S().Fatal(err)
+	}
+
+	err = c.SetNick(config.UserName)
+	if err != nil {
+		zap.S().Fatal(err)
 	}
 
 	err = c.Use(config.ServerId)
 	if err != nil {
-		return
+		zap.S().Fatal(err)
 	}
 
 	whoami, err := c.Whoami()
 	if err != nil {
-		log.Fatal(err)
+		zap.S().Fatal(err)
 	}
 	zap.S().Info("%v", whoami)
 
@@ -135,7 +139,9 @@ func main() {
 
 		channels, err := c.Server.ChannelList()
 		if err != nil {
-			log.Fatal(err)
+			zap.S().Errorf("Error getting channel list: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
 		}
 		zap.S().Info("Channels")
 		for _, channel := range channels {
@@ -154,9 +160,12 @@ func main() {
 			zap.S().Fatal("afk channel not found")
 		}
 
-		clients, err := c.Server.ClientList()
+		var clients []*ts3.OnlineClient
+		clients, err = c.Server.ClientList()
 		if err != nil {
-			log.Fatal(err)
+			zap.S().Errorf("Error getting client list: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
 		}
 
 		for _, client := range clients {
