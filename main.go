@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var re = regexp.MustCompile(`client_idle_time=(\d+)`)
+var idleTimeRegex = regexp.MustCompile(`client_idle_time=(\d+)`)
 
 type Config struct {
 	UserName        string
@@ -23,111 +23,113 @@ type Config struct {
 	IgnoredChannels []string
 }
 
-func parseEnvConfig() Config {
+func loadConfigFromEnv() (Config, error) {
+	config := Config{}
 	var err error
-	var found bool
 
-	var userName string
-	userName, found = os.LookupEnv("TS3_USER")
-	if !found {
-		zap.S().Fatal("TS3_USER not set")
-	}
-	var password string
-	password, found = os.LookupEnv("TS3_PASSWORD")
-	if !found {
-		zap.S().Fatal("TS3_PASSWORD not set")
-	}
-	var url string
-	url, found = os.LookupEnv("TS3_URL")
-	if !found {
-		zap.S().Fatal("TS3_URL not set")
-	}
-	var serverId int
-	var serverIdStr string
-	serverIdStr, found = os.LookupEnv("TS3_SERVER_ID")
-	if !found {
-		zap.S().Fatal("TS3_SERVER_ID not set")
-	}
-	serverId, err = strconv.Atoi(serverIdStr)
+	config.UserName, err = getRequiredEnv("TS3_USER")
 	if err != nil {
-		zap.S().Fatal("TS3_SERVER_ID is not a number")
-	}
-	var afkChannelName string
-	afkChannelName, found = os.LookupEnv("TS3_AFK_CHANNEL_NAME")
-	if !found {
-		zap.S().Fatal("TS3_AFK_CHANNEL_NAME not set")
+		return config, err
 	}
 
-	var maxIdleTimeMS int
-	var maxIdleTimeStr string
-	maxIdleTimeStr, found = os.LookupEnv("TS3_MAX_IDLE_TIME_SEC")
-	if !found {
-		zap.S().Fatal("TS3_MAX_IDLE_TIME_SEC not set")
-	}
-	maxIdleTimeMS, err = strconv.Atoi(maxIdleTimeStr)
+	config.Password, err = getRequiredEnv("TS3_PASSWORD")
 	if err != nil {
-		zap.S().Fatal("TS3_MAX_IDLE_TIME_SEC is not a number")
-	}
-	maxIdleTimeMS *= 1000
-
-	var ignoredChannelsRaw string
-	ignoredChannelsRaw, found = os.LookupEnv("TS3_IGNORED_CHANNELS")
-	if !found {
-		ignoredChannelsRaw = "[]"
+		return config, err
 	}
 
-	// Parse json array
-	var ignoredChannels []string
-	err = json.Unmarshal([]byte(ignoredChannelsRaw), &ignoredChannels)
+	config.Url, err = getRequiredEnv("TS3_URL")
 	if err != nil {
-		zap.S().Fatal("TS3_IGNORED_CHANNELS is not a valid json array")
+		return config, err
 	}
 
-	return Config{
-		UserName:        userName,
-		Password:        password,
-		Url:             url,
-		AfkChannelName:  afkChannelName,
-		MaxIdleTimeMs:   maxIdleTimeMS,
-		IgnoredChannels: ignoredChannels,
-		ServerId:        serverId,
+	serverIdStr, err := getRequiredEnv("TS3_SERVER_ID")
+	if err != nil {
+		return config, err
 	}
+
+	config.ServerId, err = strconv.Atoi(serverIdStr)
+	if err != nil {
+		return config, fmt.Errorf("TS3_SERVER_ID is not a number: %v", err)
+	}
+
+	config.AfkChannelName, err = getRequiredEnv("TS3_AFK_CHANNEL_NAME")
+	if err != nil {
+		return config, err
+	}
+
+	maxIdleTimeStr, err := getRequiredEnv("TS3_MAX_IDLE_TIME_SEC")
+	if err != nil {
+		return config, err
+	}
+
+	config.MaxIdleTimeMs, err = strconv.Atoi(maxIdleTimeStr)
+	if err != nil {
+		return config, fmt.Errorf("TS3_MAX_IDLE_TIME_SEC is not a number: %v", err)
+	}
+	config.MaxIdleTimeMs *= 1000
+
+	ignoredChannelsRaw, err := getRequiredEnv("TS3_IGNORED_CHANNELS")
+	if err != nil {
+		return config, err
+	}
+
+	err = json.Unmarshal([]byte(ignoredChannelsRaw), &config.IgnoredChannels)
+	if err != nil {
+		return config, fmt.Errorf("TS3_IGNORED_CHANNELS is not a valid json array: %v", err)
+	}
+
+	return config, nil
 }
-func initLogging() {
+
+func getRequiredEnv(key string) (string, error) {
+	value, found := os.LookupEnv(key)
+	if !found {
+		return "", fmt.Errorf("%s not set", key)
+	}
+	return value, nil
+}
+
+func setupLogging() error {
 	logger, err := zap.NewDevelopment(zap.Development())
 	if err != nil {
-		panic(err)
+		return err
 	}
 	zap.ReplaceGlobals(logger)
-
+	return nil
 }
 
 func main() {
-	initLogging()
+	err := setupLogging()
+	if err != nil {
+		panic(err)
+	}
 	zap.S().Info("Starting ts3-afk-mover")
-	config := parseEnvConfig()
-
-	c, err := ts3.NewClient(config.Url)
-	if err != nil {
-		zap.S().Fatal(err)
-	}
-	defer c.Close()
-
-	if err = c.Login(config.UserName, config.Password); err != nil {
-		zap.S().Fatal(err)
-	}
-
-	err = c.Use(config.ServerId)
+	config, err := loadConfigFromEnv()
 	if err != nil {
 		zap.S().Fatal(err)
 	}
 
-	err = c.SetNick(config.UserName)
+	client, err := ts3.NewClient(config.Url)
+	if err != nil {
+		zap.S().Fatal(err)
+	}
+	defer client.Close()
+
+	if err = client.Login(config.UserName, config.Password); err != nil {
+		zap.S().Fatal(err)
+	}
+
+	err = client.Use(config.ServerId)
 	if err != nil {
 		zap.S().Fatal(err)
 	}
 
-	whoami, err := c.Whoami()
+	err = client.SetNick(config.UserName)
+	if err != nil {
+		zap.S().Fatal(err)
+	}
+
+	whoami, err := client.Whoami()
 	if err != nil {
 		zap.S().Fatal(err)
 	}
@@ -137,7 +139,7 @@ func main() {
 		var afkChannelId int
 		var allowedIdleChannels []int
 
-		channels, err := c.Server.ChannelList()
+		channels, err := client.Server.ChannelList()
 		if err != nil {
 			zap.S().Errorf("Error getting channel list: %v", err)
 			time.Sleep(5 * time.Second)
@@ -161,23 +163,23 @@ func main() {
 		}
 
 		var clients []*ts3.OnlineClient
-		clients, err = c.Server.ClientList()
+		clients, err = client.Server.ClientList()
 		if err != nil {
-			zap.S().Errorf("Error getting client list: %v", err)
+			zap.S().Errorf("Error getting c list: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		for _, client := range clients {
-			zap.S().Info("%v", client)
-			exec, err := c.Server.Exec(fmt.Sprintf("clientinfo clid=%d", client.ID))
+		for _, c := range clients {
+			zap.S().Info("%v", c)
+			exec, err := client.Server.Exec(fmt.Sprintf("clientinfo clid=%d", c.ID))
 			if err != nil {
 				zap.S().Error(err)
 				continue
 			}
 
 			// extract client_idle_time=<number> from exec
-			matches := re.FindStringSubmatch(exec[0])
+			matches := idleTimeRegex.FindStringSubmatch(exec[0])
 			if len(matches) != 2 {
 				zap.S().Error("client_idle_time not found")
 				continue
@@ -189,18 +191,18 @@ func main() {
 				continue
 			}
 			if idleTime > config.MaxIdleTimeMs {
-				if contains(allowedIdleChannels, client.ChannelID) {
-					zap.S().Infof("User %s is idle for %d seconds, but in allowed channel", client.Nickname, idleTime/1000)
+				if isChannelIgnored(allowedIdleChannels, c.ChannelID) {
+					zap.S().Infof("User %s is idle for %d seconds, but in allowed channel", c.Nickname, idleTime/1000)
 					continue
 				}
-				if client.ChannelID == afkChannelId {
-					zap.S().Infof("User %s is idle for %d seconds, but already in afk channel", client.Nickname, idleTime/1000)
+				if c.ChannelID == afkChannelId {
+					zap.S().Infof("User %s is idle for %d seconds, but already in afk channel", c.Nickname, idleTime/1000)
 					continue
 				}
 
-				zap.S().Infof("User %s is idle for %d seconds", client.Nickname, idleTime/1000)
-				zap.S().Info("moving client to afk channel")
-				_, err = c.Server.Exec(fmt.Sprintf("clientmove clid=%d cid=%d", client.ID, afkChannelId))
+				zap.S().Infof("User %s is idle for %d seconds", c.Nickname, idleTime/1000)
+				zap.S().Info("moving c to afk channel")
+				_, err = client.Server.Exec(fmt.Sprintf("clientmove clid=%d cid=%d", c.ID, afkChannelId))
 				if err != nil {
 					zap.S().Error(err)
 				}
@@ -208,10 +210,9 @@ func main() {
 		}
 		time.Sleep(10 * time.Second)
 	}
-
 }
 
-func contains(channels []int, id int) bool {
+func isChannelIgnored(channels []int, id int) bool {
 	for _, channel := range channels {
 		if channel == id {
 			return true
