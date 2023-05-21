@@ -122,35 +122,24 @@ func main() {
 	defer client.Close()
 
 	if err = client.Login(config.UserName, config.Password); err != nil {
-
-		zap.S().Error(err)
-		time.Sleep(1 * time.Minute)
-		panic(err)
+		zap.S().Fatal(err)
 	}
 
 	err = client.Use(config.ServerId)
 	if err != nil {
-
-		zap.S().Error(err)
-		time.Sleep(1 * time.Minute)
-		panic(err)
+		zap.S().Fatal(err)
 	}
 
 	err = client.SetNick(config.UserName)
 	if err != nil {
-
-		zap.S().Error(err)
-		time.Sleep(1 * time.Minute)
-		panic(err)
+		zap.S().Warn(err)
 	}
 
 	whoami, err := client.Whoami()
 	if err != nil {
-
-		zap.S().Error(err)
-		time.Sleep(1 * time.Minute)
-		panic(err)
+		zap.S().Fatal(err)
 	}
+
 	zap.S().Info("%v", whoami)
 
 	var soloClients []int
