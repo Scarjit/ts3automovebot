@@ -135,6 +135,8 @@ func main() {
 	}
 	zap.S().Info("%v", whoami)
 
+	var soloClients []int
+
 	for {
 		var afkChannelId int
 		var allowedIdleChannels []int
@@ -197,6 +199,35 @@ func main() {
 				}
 				if c.ChannelID == afkChannelId {
 					zap.S().Infof("User %s is idle for %d seconds, but already in afk channel", c.Nickname, idleTime/1000)
+					continue
+				}
+				// Check if user is solo in a channel
+				var isSolo bool
+				var isGracePeriod bool
+				for _, c2 := range clients {
+					if c2.ChannelID == c.ChannelID && c2.ID != c.ID {
+						isSolo = false
+						// Remove from soloClients if user is no longer solo
+						for i, v := range soloClients {
+							if v == c.ID {
+								soloClients = append(soloClients[:i], soloClients[i+1:]...)
+								isGracePeriod = true
+								break
+							}
+						}
+						break
+					}
+					isSolo = true
+					soloClients = append(soloClients, c.ID)
+				}
+				// Don't move if user is solo in channel
+				if isSolo {
+					zap.S().Infof("User %s is idle for %d seconds, but solo in channel", c.Nickname, idleTime/1000)
+					continue
+				}
+				// Don't move if user is in a grace period
+				if isGracePeriod {
+					zap.S().Infof("User %s is idle for %d seconds, but in grace period", c.Nickname, idleTime/1000)
 					continue
 				}
 
