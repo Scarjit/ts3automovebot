@@ -106,32 +106,50 @@ func main() {
 	zap.S().Info("Starting ts3-afk-mover")
 	config, err := loadConfigFromEnv()
 	if err != nil {
-		zap.S().Fatal(err)
+
+		zap.S().Error(err)
+		time.Sleep(1 * time.Minute)
+		panic(err)
 	}
 
 	client, err := ts3.NewClient(config.Url)
 	if err != nil {
-		zap.S().Fatal(err)
+
+		zap.S().Error(err)
+		time.Sleep(1 * time.Minute)
+		panic(err)
 	}
 	defer client.Close()
 
 	if err = client.Login(config.UserName, config.Password); err != nil {
-		zap.S().Fatal(err)
+
+		zap.S().Error(err)
+		time.Sleep(1 * time.Minute)
+		panic(err)
 	}
 
 	err = client.Use(config.ServerId)
 	if err != nil {
-		zap.S().Fatal(err)
+
+		zap.S().Error(err)
+		time.Sleep(1 * time.Minute)
+		panic(err)
 	}
 
 	err = client.SetNick(config.UserName)
 	if err != nil {
-		zap.S().Fatal(err)
+
+		zap.S().Error(err)
+		time.Sleep(1 * time.Minute)
+		panic(err)
 	}
 
 	whoami, err := client.Whoami()
 	if err != nil {
-		zap.S().Fatal(err)
+
+		zap.S().Error(err)
+		time.Sleep(1 * time.Minute)
+		panic(err)
 	}
 	zap.S().Info("%v", whoami)
 
