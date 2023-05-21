@@ -201,7 +201,7 @@ func main() {
 					zap.S().Infof("User %s is idle for %d seconds, but already in afk channel", c.Nickname, idleTime/1000)
 					continue
 				}
-				// Check if user is solo in a channel
+				// Check if a user is solo in a channel
 				var isSolo bool
 				var isGracePeriod bool
 				for _, c2 := range clients {
