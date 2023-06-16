@@ -14,13 +14,14 @@ import (
 var idleTimeRegex = regexp.MustCompile(`client_idle_time=(\d+)`)
 
 type Config struct {
-	UserName        string
-	Password        string
-	ServerId        int
-	Url             string
-	AfkChannelName  string
-	MaxIdleTimeMs   int
-	IgnoredChannels []string
+	UserName         string
+	Password         string
+	ServerId         int
+	Url              string
+	AfkChannelName   string
+	MaxIdleTimeMs    int
+	IgnoredChannels  []string
+	AllowGracePeriod bool
 }
 
 func loadConfigFromEnv() (Config, error) {
@@ -76,6 +77,16 @@ func loadConfigFromEnv() (Config, error) {
 	err = json.Unmarshal([]byte(ignoredChannelsRaw), &config.IgnoredChannels)
 	if err != nil {
 		return config, fmt.Errorf("TS3_IGNORED_CHANNELS is not a valid json array: %v", err)
+	}
+
+	allowGracePeriod, err := getRequiredEnv("TS3_ALLOW_GRACE_PERIOD")
+	if err != nil {
+		return config, err
+	}
+
+	config.AllowGracePeriod, err = strconv.ParseBool(allowGracePeriod)
+	if err != nil {
+		return config, fmt.Errorf("TS3_ALLOW_GRACE_PERIOD is not a boolean: %v", err)
 	}
 
 	return config, nil
@@ -233,7 +244,7 @@ func main() {
 					continue
 				}
 				// Don't move if user is in a grace period
-				if isGracePeriod {
+				if isGracePeriod && config.AllowGracePeriod {
 					zap.S().Infof("User %s is idle for %d seconds, but in grace period", c.Nickname, idleTime/1000)
 					continue
 				}
