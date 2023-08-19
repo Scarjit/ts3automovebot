@@ -12,6 +12,7 @@ import (
 )
 
 var idleTimeRegex = regexp.MustCompile(`client_idle_time=(\d+)`)
+var recentJoins = make(map[int]time.Time)
 
 type Config struct {
 	UserName         string
@@ -109,26 +110,27 @@ func setupLogging() error {
 	return nil
 }
 
+func handleError(err error) {
+	zap.S().Error(err)
+	time.Sleep(1 * time.Minute)
+	panic(err)
+}
+
 func main() {
 	err := setupLogging()
 	if err != nil {
-		panic(err)
+		handleError(err)
 	}
+
 	zap.S().Info("Starting ts3-afk-mover")
 	config, err := loadConfigFromEnv()
 	if err != nil {
-
-		zap.S().Error(err)
-		time.Sleep(1 * time.Minute)
-		panic(err)
+		handleError(err)
 	}
 
 	client, err := ts3.NewClient(config.Url)
 	if err != nil {
-
-		zap.S().Error(err)
-		time.Sleep(1 * time.Minute)
-		panic(err)
+		handleError(err)
 	}
 	defer client.Close()
 
@@ -153,110 +155,8 @@ func main() {
 
 	zap.S().Info("%v", whoami)
 
-	var soloClients []int
-
 	for {
-		var afkChannelId int
-		var allowedIdleChannels []int
-
-		channels, err := client.Server.ChannelList()
-		if err != nil {
-			zap.S().Errorf("Error getting channel list: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		zap.S().Info("Channels")
-		for _, channel := range channels {
-			if channel.ChannelName == config.AfkChannelName {
-				afkChannelId = channel.ID
-			}
-			for _, ignoredChannel := range config.IgnoredChannels {
-				if channel.ChannelName == ignoredChannel {
-					allowedIdleChannels = append(allowedIdleChannels, channel.ID)
-					zap.S().Infof("Ignoring channel %s [%d]", channel.ChannelName, channel.ID)
-				}
-			}
-			zap.S().Infof("%s", channel.ChannelName)
-		}
-		if afkChannelId == 0 {
-			zap.S().Fatal("afk channel not found")
-		}
-
-		var clients []*ts3.OnlineClient
-		clients, err = client.Server.ClientList()
-		if err != nil {
-			zap.S().Errorf("Error getting c list: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		for _, c := range clients {
-			zap.S().Info("%v", c)
-			exec, err := client.Server.Exec(fmt.Sprintf("clientinfo clid=%d", c.ID))
-			if err != nil {
-				zap.S().Error(err)
-				continue
-			}
-
-			// extract client_idle_time=<number> from exec
-			matches := idleTimeRegex.FindStringSubmatch(exec[0])
-			if len(matches) != 2 {
-				zap.S().Error("client_idle_time not found")
-				continue
-			}
-
-			idleTime, err := strconv.Atoi(matches[1])
-			if err != nil {
-				zap.S().Error(err)
-				continue
-			}
-			if idleTime > config.MaxIdleTimeMs {
-				if isChannelIgnored(allowedIdleChannels, c.ChannelID) {
-					zap.S().Infof("User %s is idle for %d seconds, but in allowed channel", c.Nickname, idleTime/1000)
-					continue
-				}
-				if c.ChannelID == afkChannelId {
-					zap.S().Infof("User %s is idle for %d seconds, but already in afk channel", c.Nickname, idleTime/1000)
-					continue
-				}
-				// Check if a user is solo in a channel
-				var isSolo bool
-				var isGracePeriod bool
-				for _, c2 := range clients {
-					if c2.ChannelID == c.ChannelID && c2.ID != c.ID {
-						isSolo = false
-						// Remove from soloClients if user is no longer solo
-						for i, v := range soloClients {
-							if v == c.ID {
-								soloClients = append(soloClients[:i], soloClients[i+1:]...)
-								isGracePeriod = true
-								break
-							}
-						}
-						break
-					}
-					isSolo = true
-					soloClients = append(soloClients, c.ID)
-				}
-				// Don't move if user is solo in channel
-				if isSolo {
-					zap.S().Infof("User %s is idle for %d seconds, but solo in channel", c.Nickname, idleTime/1000)
-					continue
-				}
-				// Don't move if user is in a grace period
-				if isGracePeriod && config.AllowGracePeriod {
-					zap.S().Infof("User %s is idle for %d seconds, but in grace period", c.Nickname, idleTime/1000)
-					continue
-				}
-
-				zap.S().Infof("User %s is idle for %d seconds", c.Nickname, idleTime/1000)
-				zap.S().Info("moving c to afk channel")
-				_, err = client.Server.Exec(fmt.Sprintf("clientmove clid=%d cid=%d", c.ID, afkChannelId))
-				if err != nil {
-					zap.S().Error(err)
-				}
-			}
-		}
+		processClients(client, config)
 		time.Sleep(10 * time.Second)
 	}
 }
@@ -268,4 +168,125 @@ func isChannelIgnored(channels []int, id int) bool {
 		}
 	}
 	return false
+}
+
+func processClients(client *ts3.Client, config Config) {
+	// Get the list of channels.
+	channels, err := client.Server.ChannelList()
+	if err != nil {
+		zap.S().Errorf("Error getting channel list: %v", err)
+		time.Sleep(5 * time.Second)
+		return
+	}
+
+	var afkChannelId int
+	var allowedIdleChannels []int
+
+	for _, channel := range channels {
+		if channel.ChannelName == config.AfkChannelName {
+			afkChannelId = channel.ID
+		}
+
+		for _, ignoredChannel := range config.IgnoredChannels {
+			if channel.ChannelName == ignoredChannel {
+				allowedIdleChannels = append(allowedIdleChannels, channel.ID)
+				//zap.S().Infof("Ignoring channel %s [%d]", channel.ChannelName, channel.ID)
+			}
+		}
+	}
+
+	if afkChannelId == 0 {
+		zap.S().Fatal("afk channel not found")
+	}
+
+	// Get the list of clients.
+	clients, err := client.Server.ClientList()
+	if err != nil {
+		zap.S().Errorf("Error getting c list: %v", err)
+		time.Sleep(5 * time.Second)
+		return
+	}
+
+	for _, c := range clients {
+		// If the client is in a channel that had a recent join, ignore their idle time for 10 seconds.
+		if joinTime, ok := recentJoins[c.ChannelID]; ok {
+			if time.Since(joinTime) <= 10*time.Second {
+				zap.S().Infof("User %s's idle time ignored for 10 seconds due to recent join", c.Nickname)
+				continue
+			}
+		}
+
+		exec, err := client.Server.Exec(fmt.Sprintf("clientinfo clid=%d", c.ID))
+		if err != nil {
+			zap.S().Error(err)
+			continue
+		}
+
+		// Extract client_idle_time=<number> from exec
+		matches := idleTimeRegex.FindStringSubmatch(exec[0])
+		if len(matches) != 2 {
+			zap.S().Error("client_idle_time not found")
+			continue
+		}
+
+		for _, c := range clients {
+			// If the client is in a channel that had a recent join, ignore their idle time for 10 seconds.
+			if joinTime, ok := recentJoins[c.ChannelID]; ok {
+				if time.Since(joinTime) <= 10*time.Second {
+					zap.S().Infof("User %s's idle time ignored for 10 seconds due to recent join", c.Nickname)
+					continue
+				}
+			}
+
+			exec, err := client.Server.Exec(fmt.Sprintf("clientinfo clid=%d", c.ID))
+			if err != nil {
+				zap.S().Error(err)
+				continue
+			}
+
+			// Extract client_idle_time=<number> from exec
+			matches := idleTimeRegex.FindStringSubmatch(exec[0])
+			if len(matches) != 2 {
+				zap.S().Error("client_idle_time not found")
+				continue
+			}
+
+			idleTime, err := strconv.Atoi(matches[1])
+			if err != nil {
+				zap.S().Error(err)
+				continue
+			}
+
+			if idleTime > config.MaxIdleTimeMs {
+				if isChannelIgnored(allowedIdleChannels, c.ChannelID) {
+					zap.S().Infof("User %s is idle for %d seconds, but in allowed channel", c.Nickname, idleTime/1000)
+					continue
+				}
+				if c.ChannelID == afkChannelId {
+					zap.S().Infof("User %s is idle for %d seconds, but already in afk channel", c.Nickname, idleTime/1000)
+					continue
+				}
+
+				// Check if a user is solo in a channel
+				isSolo := true
+				for _, c2 := range clients {
+					if c2.ChannelID == c.ChannelID && c2.ID != c.ID {
+						isSolo = false
+						break
+					}
+				}
+				if isSolo {
+					zap.S().Infof("User %s is idle for %d seconds, but solo in channel", c.Nickname, idleTime/1000)
+					continue
+				}
+
+				zap.S().Infof("User %s is idle for %d seconds", c.Nickname, idleTime/1000)
+				zap.S().Info("moving c to afk channel")
+				_, err = client.Server.Exec(fmt.Sprintf("clientmove clid=%d cid=%d", c.ID, afkChannelId))
+				if err != nil {
+					zap.S().Error(err)
+				}
+			}
+		}
+	}
 }
